@@ -381,7 +381,8 @@ pub fn call_invoke(wat: &str, verbose: bool, chain: ChainCtx) {
 /// Simple executor like call_invoke for ontology entry.
 #[link(name = "libc", kind = "static")]
 #[no_mangle]
-pub extern "C" fn ontio_call_invoke(wasm: &[u8], inter_chain: InterOpCtx) {
+pub extern "C" fn ontio_call_invoke(code: *mut u8, codelen: u32, inter_chain: InterOpCtx) {
+    let wasm = unsafe { std::slice::from_raw_parts(code, codelen as usize) };
     let chain = ChainCtx::new(
         inter_chain.timestamp,
         inter_chain.height,
