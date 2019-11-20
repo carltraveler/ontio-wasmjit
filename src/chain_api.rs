@@ -11,6 +11,24 @@ use std::sync::{atomic::AtomicU64, Arc};
 pub type Address = [u8; 20];
 pub type H256 = [u8; 32];
 
+#[repr(C)]
+pub struct InterOpCtx {
+    pub height: u32,
+    pub block_hash: *mut u8,
+    pub timestamp: u64,
+    pub tx_hash: *mut u8,
+    pub self_address: *mut u8,
+    pub callers: *mut u8,
+    pub callers_num: usize,
+    pub witness: *mut u8,
+    pub witness_num: usize,
+    pub input: *mut u8,
+    pub input_len: usize,
+    pub gas_left: u64,
+    pub call_output: *mut u8,
+    pub call_output_len: usize,
+}
+
 pub struct ChainCtx {
     height: u32,
     block_hash: H256,

@@ -8,6 +8,7 @@ mod utils;
 
 pub mod disassm;
 
+use crate::executor::ontio_call_invoke;
 use crate::executor::FuncArgs;
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::chain_api::ChainCtx;
+use crate::chain_api::{Address, ChainCtx, InterOpCtx, H256};
 use crate::resolver::{ChainResolver, Resolver};
 use crate::trampoline::make_trampoline;
 use crate::{disassm, linker, utils};
@@ -373,6 +373,53 @@ pub fn call_invoke(wat: &str, verbose: bool, chain: ChainCtx) {
     if verbose {
         module.dump();
     }
+
+    let mut instance = module.instantiate(chain);
+    instance.invoke();
+}
+
+/// Simple executor like call_invoke for ontology entry.
+#[link(name = "libc", kind = "static")]
+#[no_mangle]
+pub extern "C" fn ontio_call_invoke(wasm: &[u8], inter_chain: InterOpCtx) {
+    let chain = ChainCtx::new(
+        inter_chain.timestamp,
+        inter_chain.height,
+        unsafe { *(inter_chain.block_hash as *mut H256) },
+        unsafe { *(inter_chain.tx_hash as *mut H256) },
+        unsafe { *(inter_chain.self_address as *mut Address) },
+        unsafe {
+            std::slice::from_raw_parts(inter_chain.callers as *mut Address, inter_chain.callers_num)
+                .to_vec()
+        },
+        unsafe {
+            std::slice::from_raw_parts(inter_chain.witness as *mut Address, inter_chain.witness_num)
+                .to_vec()
+        },
+        unsafe { std::slice::from_raw_parts(inter_chain.input, inter_chain.input_len).to_vec() },
+        unsafe {
+            std::slice::from_raw_parts(inter_chain.call_output, inter_chain.call_output_len)
+                .to_vec()
+        },
+    );
+
+    let address = utils::contract_address(wasm);
+    let module = MODULE_CACHE.lock().get(&address).cloned();
+
+    let module = module.unwrap_or_else(|| {
+        let module = Module::compile(wasm).unwrap();
+        let module = Arc::new(module);
+        let mut cache = MODULE_CACHE.lock();
+        if !cache.contains(&address) {
+            cache.put(address, module.clone());
+        }
+
+        module
+    });
+
+    //if verbose {
+    //    module.dump();
+    //}
 
     let mut instance = module.instantiate(chain);
     instance.invoke();
