@@ -1,8 +1,10 @@
 (module
-  (type $t0 (func (param i32) (param i32) (result i32)))
-  (func $add (export "add") (type $t0) (param $p0 i32) (param $p1 i32) (result i32)
-    get_local $p0
-    get_local $p1
-    i32.add)
+  (type (;0;) (func))
+  (type (;2;) (func (result i64)))
+  (import "env" "ontio_timestamp" (func $ontio_timestamp (type 1)))
+  (func $invoke (export "invoke") (type 0)
+		call $ontio_timestamp
+		drop
+  )
 )
 

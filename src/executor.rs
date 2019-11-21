@@ -92,6 +92,9 @@ for_each_tuple! {
 static MODULE_CACHE: Lazy<Mutex<LruCache<[u8; 20], Arc<Module>>>> =
     Lazy::new(|| Mutex::new(LruCache::new(20)));
 
+//static INSTANCE_CACHE: Lazy<Mutex<LruCache<[u8; 1024], Arc<Module>>>> =
+//    Lazy::new(|| Mutex::new(LruCache::new(1024)));
+
 pub struct Instance {
     module: Arc<Module>,
     handle: InstanceHandle,
@@ -382,6 +385,7 @@ pub fn call_invoke(wat: &str, verbose: bool, chain: ChainCtx) {
 #[link(name = "libc", kind = "static")]
 #[no_mangle]
 pub extern "C" fn ontio_call_invoke(code: *mut u8, codelen: u32, inter_chain: InterOpCtx) {
+    println!("ontio_call_invoke 00000");
     let wasm = unsafe { std::slice::from_raw_parts(code, codelen as usize) };
     let chain = ChainCtx::new(
         inter_chain.timestamp,
@@ -402,7 +406,13 @@ pub extern "C" fn ontio_call_invoke(code: *mut u8, codelen: u32, inter_chain: In
             std::slice::from_raw_parts(inter_chain.call_output, inter_chain.call_output_len)
                 .to_vec()
         },
+        inter_chain.wasmvm_service_ptr,
     );
+
+    println!("height: {}", chain.height);
+    println!("block_hash: {:?}", chain.block_hash);
+    println!("timestamp: {:?}", chain.timestamp);
+    println!("gas_left: {:?}", chain.gas_left);
 
     let address = utils::contract_address(wasm);
     let module = MODULE_CACHE.lock().get(&address).cloned();

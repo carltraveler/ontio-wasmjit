@@ -24,20 +24,22 @@ pub struct InterOpCtx {
     pub witness_num: usize,
     pub input: *mut u8,
     pub input_len: usize,
+    pub wasmvm_service_ptr: u64,
     pub gas_left: u64,
     pub call_output: *mut u8,
     pub call_output_len: usize,
 }
 
 pub struct ChainCtx {
-    height: u32,
-    block_hash: H256,
-    timestamp: u64,
-    tx_hash: H256,
-    self_address: Address,
-    callers: Vec<Address>,
-    witness: Vec<Address>,
+    pub height: u32,
+    pub block_hash: H256,
+    pub timestamp: u64,
+    pub tx_hash: H256,
+    pub self_address: Address,
+    pub callers: Vec<Address>,
+    pub witness: Vec<Address>,
     input: Vec<u8>,
+    pub wasmvm_service_ptr: u64,
     pub(crate) gas_left: Arc<AtomicU64>,
     call_output: Vec<u8>,
 }
@@ -53,6 +55,7 @@ impl ChainCtx {
         witness: Vec<Address>,
         input: Vec<u8>,
         call_output: Vec<u8>,
+        wasmvm_service_ptr: u64,
     ) -> Self {
         let gas_left = Arc::new(AtomicU64::new(u64::max_value()));
 
@@ -65,6 +68,7 @@ impl ChainCtx {
             callers,
             witness,
             input,
+            wasmvm_service_ptr,
             gas_left,
             call_output,
         }
@@ -263,6 +267,7 @@ pub unsafe extern "C" fn ontio_get_call_output(vmctx: *mut VMContext, dst_ptr: u
 #[no_mangle]
 pub unsafe extern "C" fn ontio_panic(vmctx: *mut VMContext, input_ptr: u32, ptr_len: u32) {
     let msg = panic::catch_unwind(|| {
+        println!("ontio_panic 00000");
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
@@ -303,6 +308,50 @@ pub unsafe extern "C" fn ontio_sha256(vmctx: *mut VMContext, data_ptr: u32, l: u
         memory[start..start + res.len()].copy_from_slice(&res);
     })
 }
+
+extern "C" {
+    fn ontio_debug_cgo(vmctx: *mut u8, data_ptr: u32, l: u32);
+}
+
+/// Implementation of ontio_debug api
+#[no_mangle]
+pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
+    check_host_panic(|| {
+        println!("ontio_debug enter");
+        let instance = (&mut *vmctx).instance();
+        let memory = instance
+            .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
+            .unwrap();
+        // check here to avoid the memory attack in go.
+        if memory.len() < (data_ptr + l) as usize {
+            panic!("data_ptr over access");
+        }
+
+        ontio_debug_cgo(vmctx as *mut u8, data_ptr, l);
+    })
+}
+
+/// Interface for cgo read wasm vm memory
+#[no_mangle]
+pub unsafe extern "C" fn ontio_read_wasmvm_memory(
+    vmctx: *mut VMContext,
+    buff: *mut u8,
+    data_ptr: u32,
+    data_len: u32,
+) {
+    check_host_panic(|| {
+        let instance = (&mut *vmctx).instance();
+        let memory = instance
+            .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
+            .unwrap();
+        let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
+        outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
+    })
+}
+
+/// Implementation of memoryread api
+#[no_mangle]
+pub unsafe extern "C" fn ontio_wasm_service_ptr(vmctx: *mut VMContext) {}
 
 /*
 const SIGNATURES: [(&str, &[ValueType], Option<ValueType>); 24] = [
@@ -388,6 +437,10 @@ impl Resolver for ChainResolver {
             }),
             "ontio_panic" => Some(VMFunctionImport {
                 body: ontio_panic as *const VMFunctionBody,
+                vmctx: ptr::null_mut(),
+            }),
+            "ontio_debug" => Some(VMFunctionImport {
+                body: ontio_debug as *const VMFunctionBody,
                 vmctx: ptr::null_mut(),
             }),
             _ => None,
