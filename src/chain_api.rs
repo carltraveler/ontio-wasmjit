@@ -1,7 +1,7 @@
 use crate::resolver::Resolver;
 use cranelift_wasm::DefinedMemoryIndex;
 use hmac_sha256::Hash;
-use ontio_wasmjit_runtime::builtins::check_host_panic;
+use ontio_wasmjit_runtime::builtins::{catch_wasm_panic, check_host_panic};
 use ontio_wasmjit_runtime::{wasmjit_unwind, VMContext, VMFunctionBody, VMFunctionImport};
 use std::panic;
 use std::ptr;
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn ontio_sha256(vmctx: *mut VMContext, data_ptr: u32, l: u
 }
 
 extern "C" {
-    fn ontio_debug_cgo(vmctx: *mut u8, data_ptr: u32, l: u32);
+    fn ontio_debug_cgo(vmctx: *mut u8, data_ptr: u32, l: u32) -> u32;
 }
 
 /// Implementation of ontio_debug api
@@ -327,7 +327,9 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
             panic!("data_ptr over access");
         }
 
-        ontio_debug_cgo(vmctx as *mut u8, data_ptr, l);
+        if ontio_debug_cgo(vmctx as *mut u8, data_ptr, l) == 0 {
+            panic!("ontio_debug panic");
+        }
     })
 }
 
@@ -338,20 +340,40 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     buff: *mut u8,
     data_ptr: u32,
     data_len: u32,
-) {
-    check_host_panic(|| {
+) -> u32 {
+    let res = catch_wasm_panic(|| {
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
             .unwrap();
         let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
         outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
-    })
+        Ok(())
+    });
+
+    match res {
+        Ok(..) => 1,  //true
+        Err(..) => 0, //false
+    }
 }
 
 /// Implementation of memoryread api
 #[no_mangle]
-pub unsafe extern "C" fn ontio_wasm_service_ptr(vmctx: *mut VMContext) {}
+pub unsafe extern "C" fn ontio_wasm_service_ptr(
+    vmctx: *mut VMContext,
+    wasmvm_service_ptr: *mut u64,
+) -> u32 {
+    let res = catch_wasm_panic(|| {
+        let host = (&mut *vmctx).host_state();
+        let chain = host.downcast_ref::<ChainCtx>().unwrap();
+        *wasmvm_service_ptr = chain.wasmvm_service_ptr;
+        Ok(())
+    });
+    match res {
+        Ok(..) => 1,      //true
+        Err(errmsg) => 0, //false
+    }
+}
 
 /*
 const SIGNATURES: [(&str, &[ValueType], Option<ValueType>); 24] = [
