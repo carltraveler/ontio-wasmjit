@@ -18,7 +18,7 @@ pub type Address = [u8; 20];
 pub type H256 = [u8; 32];
 
 #[repr(C)]
-pub struct Cgovoid {
+pub struct Cgoerror {
     pub err: Error,
     pub errmsg: Memptr, //*String
 }
@@ -41,7 +41,7 @@ pub struct Cgobuffer {
 pub type Cgooutput = Cgobuffer; // errmsg *std::ffi::CString
 
 extern "C" {
-    fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgovoid;
+    fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
 }
 
 #[repr(C)]
@@ -408,7 +408,7 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     buff: Memptr,
     data_ptr: u32,
     data_len: u32,
-) -> Cgovoid {
+) -> Cgoerror {
     let res = catch_wasm_panic(|| {
         let instance = (&mut *vmctx).instance();
         let memory = instance
@@ -416,16 +416,16 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
             .unwrap();
         let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
         outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
-        //panic!("so test Cgovoid is ok");
+        //panic!("so test Cgoerror is ok");
         Ok(())
     });
 
     match res {
-        Ok(..) => Cgovoid {
+        Ok(..) => Cgoerror {
             err: 0,
             errmsg: null_mut(),
         }, //true
-        Err(err_message) => Cgovoid {
+        Err(err_message) => Cgoerror {
             err: 1,
             errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
         }, //false
@@ -437,16 +437,24 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
 pub unsafe extern "C" fn ontio_wasm_service_ptr(
     vmctx: *mut VMContext,
     wasmvm_service_ptr: *mut u64,
-) -> Error {
+) -> Cgou64 {
     let res = catch_wasm_panic(|| {
         let host = (&mut *vmctx).host_state();
         let chain = host.downcast_ref::<ChainCtx>().unwrap();
-        *wasmvm_service_ptr = chain.wasmvm_service_ptr;
-        Ok(())
+        Ok(chain.wasmvm_service_ptr)
     });
+
     match res {
-        Ok(..) => 1,  //true
-        Err(..) => 0, //false
+        Ok(wasmvm_service_ptr) => Cgou64 {
+            v: wasmvm_service_ptr,
+            err: 0,
+            errmsg: null_mut(),
+        }, //true
+        Err(err_message) => Cgou64 {
+            v: 0,
+            err: 1,
+            errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
+        }, //false
     }
 }
 
@@ -468,6 +476,15 @@ pub unsafe extern "C" fn ontio_memalloc(size: u32) -> Cgobuffer {
         outputlen: size,
         err: 0,
         errmsg: null_mut(),
+    }
+}
+
+/// ontio_memalloc_withcstring
+#[no_mangle]
+pub unsafe extern "C" fn ontio_err_from_cstring(ptr: *mut u8, size: u32) -> Cgoerror {
+    Cgoerror {
+        err: 1,
+        errmsg: Box::into_raw(Box::new(CString::from_raw(ptr as *mut i8).into_string())) as Memptr,
     }
 }
 
