@@ -1,7 +1,9 @@
-use crate::chain_api::{Address, ChainCtx, InterOpCtx, H256};
+use crate::chain_api::{Address, Cgooutput, ChainCtx, InterOpCtx, H256};
 use crate::resolver::{ChainResolver, Resolver};
 use crate::trampoline::make_trampoline;
 use crate::{disassm, linker, utils};
+use std::ffi::CString;
+use std::ptr::null_mut;
 
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
@@ -101,7 +103,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    fn invoke(&mut self) {
+    fn invoke(&mut self) -> Cgooutput {
         if let Some(memory) = self
             .handle
             .instance_mut()
@@ -118,8 +120,24 @@ impl Instance {
             .expect(&format!("can not find export function:{}", "invoke"));
 
         unsafe {
-            if let Err(err) = wasmjit_call(invoke.vmctx, invoke.address) {
-                println!("execute paniced: {}", err);
+            if let Err(errs) = wasmjit_call(invoke.vmctx, invoke.address) {
+                println!("execute paniced: {}", errs);
+                let cerrs = CString::new(errs).unwrap(); // error string will copy to go env to printout.
+                Cgooutput {
+                    output: null_mut(),
+                    outputlen: 0,
+                    err: 1,
+                    errmsg: cerrs.into_raw() as Memptr,
+                }
+            } else {
+                let host = self.handle.instance_mut().host_state();
+                let chain = host.downcast_mut::<ChainCtx>().unwrap();
+                Cgooutput {
+                    output: chain.output,
+                    outputlen: chain.outputlen,
+                    err: 0,
+                    errmsg: null_mut(),
+                }
             }
         }
     }
@@ -381,10 +399,17 @@ pub fn call_invoke(wat: &str, verbose: bool, chain: ChainCtx) {
     instance.invoke();
 }
 
+type Error = u32;
+type Memptr = *mut u8;
+
 /// Simple executor like call_invoke for ontology entry.
 #[link(name = "libc", kind = "static")]
 #[no_mangle]
-pub extern "C" fn ontio_call_invoke(code: *mut u8, codelen: u32, inter_chain: InterOpCtx) {
+pub extern "C" fn ontio_call_invoke(
+    code: *mut u8,
+    codelen: u32,
+    inter_chain: InterOpCtx,
+) -> Cgooutput {
     println!("ontio_call_invoke 00000");
     let wasm = unsafe { std::slice::from_raw_parts(code, codelen as usize) };
     let chain = ChainCtx::new(
@@ -433,5 +458,6 @@ pub extern "C" fn ontio_call_invoke(code: *mut u8, codelen: u32, inter_chain: In
     //}
 
     let mut instance = module.instantiate(chain);
-    instance.invoke();
+    instance.invoke()
+    //unsafe { *output = chain.output };
 }

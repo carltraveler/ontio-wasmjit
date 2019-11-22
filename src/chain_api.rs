@@ -1,15 +1,48 @@
 use crate::resolver::Resolver;
 use cranelift_wasm::DefinedMemoryIndex;
 use hmac_sha256::Hash;
+use libc;
 use ontio_wasmjit_runtime::builtins::{catch_wasm_panic, check_host_panic};
 use ontio_wasmjit_runtime::{wasmjit_unwind, VMContext, VMFunctionBody, VMFunctionImport};
+use std::ffi::CString;
 use std::panic;
 use std::ptr;
+use std::ptr::null_mut;
 use std::sync::atomic::Ordering;
 use std::sync::{atomic::AtomicU64, Arc};
 
+type Memptr = *mut u8;
+type Error = u32;
+
 pub type Address = [u8; 20];
 pub type H256 = [u8; 32];
+
+#[repr(C)]
+pub struct Cgovoid {
+    pub err: Error,
+    pub errmsg: Memptr, //*String
+}
+
+#[repr(C)]
+pub struct Cgou64 {
+    pub v: u64,
+    pub err: Error,
+    pub errmsg: Memptr, //*String
+}
+
+#[repr(C)]
+pub struct Cgobuffer {
+    pub output: Memptr,
+    pub outputlen: u32,
+    pub err: Error,
+    pub errmsg: Memptr, //*String
+}
+
+pub type Cgooutput = Cgobuffer; // errmsg *std::ffi::CString
+
+extern "C" {
+    fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgovoid;
+}
 
 #[repr(C)]
 pub struct InterOpCtx {
@@ -42,6 +75,8 @@ pub struct ChainCtx {
     pub wasmvm_service_ptr: u64,
     pub(crate) gas_left: Arc<AtomicU64>,
     call_output: Vec<u8>,
+    pub output: Memptr,
+    pub outputlen: u32,
 }
 
 impl ChainCtx {
@@ -71,6 +106,8 @@ impl ChainCtx {
             wasmvm_service_ptr,
             gas_left,
             call_output,
+            output: null_mut(),
+            outputlen: 0,
         }
     }
 }
@@ -309,10 +346,6 @@ pub unsafe extern "C" fn ontio_sha256(vmctx: *mut VMContext, data_ptr: u32, l: u
     })
 }
 
-extern "C" {
-    fn ontio_debug_cgo(vmctx: *mut u8, data_ptr: u32, l: u32) -> u32;
-}
-
 /// Implementation of ontio_debug api
 #[no_mangle]
 pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
@@ -327,9 +360,41 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
             panic!("data_ptr over access");
         }
 
-        if ontio_debug_cgo(vmctx as *mut u8, data_ptr, l) == 0 {
-            panic!("ontio_debug panic");
+        let err = ontio_debug_cgo(vmctx as Memptr, data_ptr, l);
+
+        if err.err != 0 {
+            panic!(*Box::from_raw(err.errmsg as *mut String));
         }
+    })
+}
+
+/// Implementation of ontio_debug api
+#[no_mangle]
+pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
+    check_host_panic(|| {
+        let instance = (&mut *vmctx).instance();
+        let memory = instance
+            .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
+            .unwrap();
+        // check here to avoid the memory attack in go.
+        if memory.len() < (data_ptr + l) as usize {
+            panic!("data_ptr over access");
+        }
+
+        let host = (&mut *vmctx).host_state();
+        let chain = host.downcast_mut::<ChainCtx>().unwrap();
+
+        let outputbuffer = ontio_memalloc(l);
+        if outputbuffer.err != 0 {
+            panic!(*Box::from_raw(outputbuffer.errmsg as *mut String));
+        }
+
+        // only a ref. so buffer not drop here.
+        let output = std::slice::from_raw_parts_mut(outputbuffer.output, l as usize);
+        output.copy_from_slice(&memory[data_ptr as usize..(data_ptr + l) as usize]);
+
+        chain.output = outputbuffer.output;
+        chain.outputlen = l;
     })
 }
 
@@ -337,10 +402,10 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
 #[no_mangle]
 pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     vmctx: *mut VMContext,
-    buff: *mut u8,
+    buff: Memptr,
     data_ptr: u32,
     data_len: u32,
-) -> u32 {
+) -> Cgovoid {
     let res = catch_wasm_panic(|| {
         let instance = (&mut *vmctx).instance();
         let memory = instance
@@ -348,12 +413,19 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
             .unwrap();
         let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
         outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
+        panic!("so test Cgovoid is ok");
         Ok(())
     });
 
     match res {
-        Ok(..) => 1,  //true
-        Err(..) => 0, //false
+        Ok(..) => Cgovoid {
+            err: 0,
+            errmsg: null_mut(),
+        }, //true
+        Err(err_message) => Cgovoid {
+            err: 1,
+            errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
+        }, //false
     }
 }
 
@@ -362,7 +434,7 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
 pub unsafe extern "C" fn ontio_wasm_service_ptr(
     vmctx: *mut VMContext,
     wasmvm_service_ptr: *mut u64,
-) -> u32 {
+) -> Error {
     let res = catch_wasm_panic(|| {
         let host = (&mut *vmctx).host_state();
         let chain = host.downcast_ref::<ChainCtx>().unwrap();
@@ -370,9 +442,53 @@ pub unsafe extern "C" fn ontio_wasm_service_ptr(
         Ok(())
     });
     match res {
-        Ok(..) => 1,      //true
-        Err(errmsg) => 0, //false
+        Ok(..) => 1,  //true
+        Err(..) => 0, //false
     }
+}
+
+/// ontio_memalloc
+#[no_mangle]
+pub unsafe extern "C" fn ontio_memalloc(size: u32) -> Cgobuffer {
+    let ptr_t = libc::malloc(size as usize);
+    if ptr_t as isize == -1_isize {
+        return Cgobuffer {
+            output: null_mut(),
+            outputlen: 0,
+            err: 1,
+            errmsg: Box::into_raw(Box::new(String::from("ontio_memalloc alloc failed"))) as Memptr,
+        };
+    }
+
+    Cgobuffer {
+        output: ptr_t as Memptr,
+        outputlen: size,
+        err: 0,
+        errmsg: null_mut(),
+    }
+}
+
+/// ontio_memfree
+#[no_mangle]
+pub unsafe extern "C" fn ontio_memfree(ptr: Memptr) {
+    if ptr.is_null() {
+        return;
+    }
+    let ptr = libc::free(ptr as *mut core::ffi::c_void);
+}
+
+/// ontio_free_cgooutput
+#[no_mangle]
+pub unsafe extern "C" fn ontio_free_cgooutput(output: Cgooutput) {
+    unsafe {
+        ontio_memfree(output.output);
+
+        if output.errmsg.is_null() {
+            return;
+        }
+
+        CString::from_raw(output.errmsg as *mut i8)
+    };
 }
 
 /*
