@@ -372,6 +372,7 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
 #[no_mangle]
 pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
     check_host_panic(|| {
+        println!("ontio_return enter");
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
@@ -393,6 +394,8 @@ pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u
         let output = std::slice::from_raw_parts_mut(outputbuffer.output, l as usize);
         output.copy_from_slice(&memory[data_ptr as usize..(data_ptr + l) as usize]);
 
+        println!("ontio_return");
+
         chain.output = outputbuffer.output;
         chain.outputlen = l;
     })
@@ -413,7 +416,7 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
             .unwrap();
         let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
         outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
-        panic!("so test Cgovoid is ok");
+        //panic!("so test Cgovoid is ok");
         Ok(())
     });
 
@@ -579,6 +582,10 @@ impl Resolver for ChainResolver {
             }),
             "ontio_debug" => Some(VMFunctionImport {
                 body: ontio_debug as *const VMFunctionBody,
+                vmctx: ptr::null_mut(),
+            }),
+            "ontio_return" => Some(VMFunctionImport {
+                body: ontio_return as *const VMFunctionBody,
                 vmctx: ptr::null_mut(),
             }),
             _ => None,

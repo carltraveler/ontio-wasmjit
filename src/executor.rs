@@ -130,6 +130,7 @@ impl Instance {
                     errmsg: cerrs.into_raw() as Memptr,
                 }
             } else {
+                println!("execute ok xxxxxxxxxxxxxxxx");
                 let host = self.handle.instance_mut().host_state();
                 let chain = host.downcast_mut::<ChainCtx>().unwrap();
                 Cgooutput {
