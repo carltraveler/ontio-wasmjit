@@ -428,10 +428,6 @@ pub extern "C" fn ontio_call_invoke(
                 .to_vec()
         },
         unsafe { std::slice::from_raw_parts(inter_chain.input, inter_chain.input_len).to_vec() },
-        unsafe {
-            std::slice::from_raw_parts(inter_chain.call_output, inter_chain.call_output_len)
-                .to_vec()
-        },
         inter_chain.wasmvm_service_ptr,
     );
 

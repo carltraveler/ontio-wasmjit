@@ -92,7 +92,6 @@ pub fn execute<Args: FuncArgs>(wat: &str, func: &str, args: Args, verbose: bool)
         Vec::new(),
         Vec::new(),
         Vec::new(),
-        Vec::new(),
         0,
     );
     executor::execute(wat, func, args, verbose, chain)

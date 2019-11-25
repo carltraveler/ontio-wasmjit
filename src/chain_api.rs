@@ -73,8 +73,6 @@ pub struct InterOpCtx {
     pub input_len: usize,
     pub wasmvm_service_ptr: u64,
     pub gas_left: u64,
-    pub call_output: *mut u8,
-    pub call_output_len: usize,
 }
 
 pub struct ChainCtx {
@@ -103,7 +101,6 @@ impl ChainCtx {
         callers: Vec<Address>,
         witness: Vec<Address>,
         input: Vec<u8>,
-        call_output: Vec<u8>,
         wasmvm_service_ptr: u64,
     ) -> Self {
         let gas_left = Arc::new(AtomicU64::new(u64::max_value()));
@@ -119,7 +116,7 @@ impl ChainCtx {
             input,
             wasmvm_service_ptr,
             gas_left,
-            call_output,
+            call_output: Vec::new(),
             output: null_mut(),
             outputlen: 0,
         }
@@ -318,7 +315,6 @@ pub unsafe extern "C" fn ontio_get_call_output(vmctx: *mut VMContext, dst_ptr: u
 #[no_mangle]
 pub unsafe extern "C" fn ontio_panic(vmctx: *mut VMContext, input_ptr: u32, ptr_len: u32) {
     let msg = panic::catch_unwind(|| {
-        println!("ontio_panic 00000");
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
@@ -364,7 +360,6 @@ pub unsafe extern "C" fn ontio_sha256(vmctx: *mut VMContext, data_ptr: u32, l: u
 #[no_mangle]
 pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
     check_host_panic(|| {
-        println!("ontio_debug enter");
         let err = ontio_debug_cgo(vmctx as Memptr, data_ptr, l);
 
         if err.err != 0 {
@@ -502,8 +497,13 @@ pub unsafe extern "C" fn ontio_set_calloutput(
     let res = catch_wasm_panic(|| {
         let host = (&mut *vmctx).host_state();
         let chain = host.downcast_mut::<ChainCtx>().unwrap();
-        let v = std::slice::from_raw_parts(buff, size as usize).to_vec();
-        chain.call_output = v;
+        // here check the old call_output wil memleak?
+        if size != 0 {
+            let v = std::slice::from_raw_parts(buff, size as usize).to_vec();
+            chain.call_output = v;
+        } else {
+            chain.call_output = Vec::new();
+        }
         Ok(())
     });
 
