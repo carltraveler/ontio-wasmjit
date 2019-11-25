@@ -49,6 +49,7 @@ pub type Cgooutput = Cgobuffer; // errmsg *std::ffi::CString
 
 extern "C" {
     fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
+    fn ontio_notify_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
     fn ontio_call_contract_cgo(
         vmctx: Memptr,
         contract_addr: u32,
@@ -418,6 +419,17 @@ pub unsafe extern "C" fn ontio_call_contract(
     })
 }
 
+/// Implementation of ontio_debug api
+#[no_mangle]
+pub unsafe extern "C" fn ontio_notify(vmctx: *mut VMContext, ptr: u32, l: u32) {
+    check_host_panic(|| {
+        let err = ontio_notify_cgo(vmctx as Memptr, ptr, l);
+        if err.err != 0 {
+            panic!(*Box::from_raw(err.errmsg as *mut String));
+        }
+    })
+}
+
 /// Interface for cgo read wasm vm memory.
 #[no_mangle]
 pub unsafe extern "C" fn ontio_read_wasmvm_memory(
@@ -518,9 +530,9 @@ pub unsafe extern "C" fn ontio_memalloc(size: u32) -> Result<Memptr, String> {
     Ok(ptr_t as Memptr)
 }
 
-/// ontio_err_from_cstring
+/// ontio_error
 #[no_mangle]
-pub unsafe extern "C" fn ontio_err_from_cstring(ptr: *mut u8, len: u32) -> Cgoerror {
+pub unsafe extern "C" fn ontio_error(ptr: *mut u8, len: u32) -> Cgoerror {
     let res = catch_wasm_panic(|| {
         let v = std::slice::from_raw_parts(ptr, len as usize).to_vec();
         Ok(Cgoerror {
@@ -659,6 +671,10 @@ impl Resolver for ChainResolver {
             }),
             "ontio_call_contract" => Some(VMFunctionImport {
                 body: ontio_call_contract as *const VMFunctionBody,
+                vmctx: ptr::null_mut(),
+            }),
+            "ontio_notify" => Some(VMFunctionImport {
+                body: ontio_notify as *const VMFunctionBody,
                 vmctx: ptr::null_mut(),
             }),
             _ => None,
