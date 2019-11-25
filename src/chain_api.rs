@@ -31,6 +31,13 @@ pub struct Cgou64 {
 }
 
 #[repr(C)]
+pub struct Cgou32 {
+    pub v: u32,
+    pub err: Error,
+    pub errmsg: Memptr, //*String
+}
+
+#[repr(C)]
 pub struct Cgobuffer {
     pub output: Memptr,
     pub outputlen: u32,
@@ -42,6 +49,12 @@ pub type Cgooutput = Cgobuffer; // errmsg *std::ffi::CString
 
 extern "C" {
     fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
+    fn ontio_call_contract_cgo(
+        vmctx: Memptr,
+        contract_addr: u32,
+        input_ptr: u32,
+        input_len: u32,
+    ) -> Cgoerror;
 }
 
 #[repr(C)]
@@ -351,15 +364,6 @@ pub unsafe extern "C" fn ontio_sha256(vmctx: *mut VMContext, data_ptr: u32, l: u
 pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
     check_host_panic(|| {
         println!("ontio_debug enter");
-        let instance = (&mut *vmctx).instance();
-        let memory = instance
-            .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
-            .unwrap();
-        // check here to avoid the memory attack in go.
-        if memory.len() < (data_ptr + l) as usize {
-            panic!("data_ptr over access");
-        }
-
         let err = ontio_debug_cgo(vmctx as Memptr, data_ptr, l);
 
         if err.err != 0 {
@@ -372,7 +376,6 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
 #[no_mangle]
 pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
     check_host_panic(|| {
-        println!("ontio_return enter");
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
@@ -385,47 +388,69 @@ pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u
         let host = (&mut *vmctx).host_state();
         let chain = host.downcast_mut::<ChainCtx>().unwrap();
 
-        let outputbuffer = ontio_memalloc(l);
-        if outputbuffer.err != 0 {
-            panic!(*Box::from_raw(outputbuffer.errmsg as *mut String));
-        }
+        let outputbuffer = ontio_memalloc(l).unwrap();
 
         // only a ref. so buffer not drop here.
-        let output = std::slice::from_raw_parts_mut(outputbuffer.output, l as usize);
+        let output = std::slice::from_raw_parts_mut(outputbuffer, l as usize);
         output.copy_from_slice(&memory[data_ptr as usize..(data_ptr + l) as usize]);
 
-        println!("ontio_return");
-
-        chain.output = outputbuffer.output;
+        chain.output = outputbuffer;
         chain.outputlen = l;
     })
 }
 
-/// Interface for cgo read wasm vm memory
+/// Implementation of ontio_debug api
+#[no_mangle]
+pub unsafe extern "C" fn ontio_call_contract(
+    vmctx: *mut VMContext,
+    contract_addr: u32,
+    input_ptr: u32,
+    inputlen: u32,
+) -> u32 {
+    check_host_panic(|| {
+        let err = ontio_call_contract_cgo(vmctx as Memptr, contract_addr, input_ptr, inputlen);
+        if err.err != 0 {
+            panic!(*Box::from_raw(err.errmsg as *mut String));
+        }
+        let host = (&mut *vmctx).host_state();
+        let chain = host.downcast_ref::<ChainCtx>().unwrap();
+        chain.call_output.len() as u32
+    })
+}
+
+/// Interface for cgo read wasm vm memory.
 #[no_mangle]
 pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     vmctx: *mut VMContext,
-    buff: Memptr,
     data_ptr: u32,
     data_len: u32,
-) -> Cgoerror {
+) -> Cgobuffer {
     let res = catch_wasm_panic(|| {
         let instance = (&mut *vmctx).instance();
         let memory = instance
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
             .unwrap();
+        if memory.len() < (data_ptr + data_len) as usize {
+            panic!("ontio_read_wasmvm_memory out of bound");
+        }
+        // bound check to avoid memory attack.
+        let buff = ontio_memalloc(data_len).unwrap();
+
         let outputbuff = std::slice::from_raw_parts_mut(buff, data_len as usize);
         outputbuff.copy_from_slice(&memory[data_ptr as usize..(data_ptr + data_len) as usize]);
-        //panic!("so test Cgoerror is ok");
-        Ok(())
+        Ok(buff)
     });
 
     match res {
-        Ok(..) => Cgoerror {
+        Ok(buff) => Cgobuffer {
+            output: buff,
+            outputlen: data_len,
             err: 0,
             errmsg: null_mut(),
         }, //true
-        Err(err_message) => Cgoerror {
+        Err(err_message) => Cgobuffer {
+            output: null_mut(),
+            outputlen: 0,
             err: 1,
             errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
         }, //false
@@ -434,10 +459,7 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
 
 /// Implementation of memoryread api
 #[no_mangle]
-pub unsafe extern "C" fn ontio_wasm_service_ptr(
-    vmctx: *mut VMContext,
-    wasmvm_service_ptr: *mut u64,
-) -> Cgou64 {
+pub unsafe extern "C" fn ontio_wasm_service_ptr(vmctx: *mut VMContext) -> Cgou64 {
     let res = catch_wasm_panic(|| {
         let host = (&mut *vmctx).host_state();
         let chain = host.downcast_ref::<ChainCtx>().unwrap();
@@ -458,33 +480,63 @@ pub unsafe extern "C" fn ontio_wasm_service_ptr(
     }
 }
 
-/// ontio_memalloc
+/// ontio_set_calloutput()
 #[no_mangle]
-pub unsafe extern "C" fn ontio_memalloc(size: u32) -> Cgobuffer {
-    let ptr_t = libc::malloc(size as usize);
-    if ptr_t as isize == -1_isize {
-        return Cgobuffer {
-            output: null_mut(),
-            outputlen: 0,
-            err: 1,
-            errmsg: Box::into_raw(Box::new(String::from("ontio_memalloc alloc failed"))) as Memptr,
-        };
-    }
+pub unsafe extern "C" fn ontio_set_calloutput(
+    vmctx: *mut VMContext,
+    buff: Memptr,
+    size: u32,
+) -> Cgoerror {
+    let res = catch_wasm_panic(|| {
+        let host = (&mut *vmctx).host_state();
+        let chain = host.downcast_mut::<ChainCtx>().unwrap();
+        let v = std::slice::from_raw_parts(buff, size as usize).to_vec();
+        chain.call_output = v;
+        Ok(())
+    });
 
-    Cgobuffer {
-        output: ptr_t as Memptr,
-        outputlen: size,
-        err: 0,
-        errmsg: null_mut(),
+    match res {
+        Ok(..) => Cgoerror {
+            err: 0,
+            errmsg: null_mut(),
+        },
+        Err(err_message) => Cgoerror {
+            err: 1,
+            errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
+        },
     }
 }
 
-/// ontio_memalloc_withcstring
+/// ontio_memalloc
 #[no_mangle]
-pub unsafe extern "C" fn ontio_err_from_cstring(ptr: *mut u8, size: u32) -> Cgoerror {
-    Cgoerror {
-        err: 1,
-        errmsg: Box::into_raw(Box::new(CString::from_raw(ptr as *mut i8).into_string())) as Memptr,
+pub unsafe extern "C" fn ontio_memalloc(size: u32) -> Result<Memptr, String> {
+    let ptr_t = libc::malloc(size as usize);
+    if ptr_t as isize == -1_isize {
+        return Err(String::from("alloc memory failed"));
+    }
+
+    Ok(ptr_t as Memptr)
+}
+
+/// ontio_err_from_cstring
+#[no_mangle]
+pub unsafe extern "C" fn ontio_err_from_cstring(ptr: *mut u8, len: u32) -> Cgoerror {
+    let res = catch_wasm_panic(|| {
+        let v = std::slice::from_raw_parts(ptr, len as usize).to_vec();
+        Ok(Cgoerror {
+            err: 1,
+            errmsg: Box::into_raw(Box::new(
+                CString::from_vec_unchecked(v).into_string().unwrap(),
+            )) as Memptr,
+        })
+    });
+
+    match res {
+        Ok(err) => err,
+        Err(err_message) => Cgoerror {
+            err: 1,
+            errmsg: Box::into_raw(Box::new(err_message)) as Memptr,
+        },
     }
 }
 
@@ -603,6 +655,10 @@ impl Resolver for ChainResolver {
             }),
             "ontio_return" => Some(VMFunctionImport {
                 body: ontio_return as *const VMFunctionBody,
+                vmctx: ptr::null_mut(),
+            }),
+            "ontio_call_contract" => Some(VMFunctionImport {
+                body: ontio_call_contract as *const VMFunctionBody,
                 vmctx: ptr::null_mut(),
             }),
             _ => None,
