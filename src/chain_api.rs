@@ -309,7 +309,7 @@ pub unsafe extern "C" fn ontio_get_call_output(vmctx: *mut VMContext, dst_ptr: u
             .memory_slice_mut(DefinedMemoryIndex::from_u32(0))
             .unwrap();
         let start = dst_ptr as usize;
-        memory[start..start + chain.input.len()].copy_from_slice(&chain.call_output);
+        memory[start..start + chain.call_output.len()].copy_from_slice(&chain.call_output);
     })
 }
 
