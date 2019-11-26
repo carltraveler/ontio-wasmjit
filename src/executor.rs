@@ -120,24 +120,39 @@ impl Instance {
             .expect(&format!("can not find export function:{}", "invoke"));
 
         unsafe {
-            if let Err(errs) = wasmjit_call(invoke.vmctx, invoke.address) {
-                println!("execute paniced: {}", errs);
-                let cerrs = CString::new(errs).unwrap(); // error string will copy to go env to printout.
-                Cgooutput {
-                    output: null_mut(),
-                    outputlen: 0,
-                    err: 1,
-                    errmsg: cerrs.into_raw() as Memptr,
+            let err = wasmjit_call(invoke.vmctx, invoke.address);
+            let host = self.handle.instance_mut().host_state();
+            let chain = host.downcast_mut::<ChainCtx>().unwrap();
+
+            match err {
+                _ if err
+                    == Err(String::from(
+                        "wasm trap: user trap 0:ontio_return_special_sig, source location: @-",
+                    )) =>
+                {
+                    println!("execute ok normal return");
+                    Cgooutput {
+                        output: chain.output,
+                        outputlen: chain.outputlen,
+                        err: 0,
+                        errmsg: null_mut(),
+                    }
                 }
-            } else {
-                println!("execute ok xxxxxxxxxxxxxxxx");
-                let host = self.handle.instance_mut().host_state();
-                let chain = host.downcast_mut::<ChainCtx>().unwrap();
-                Cgooutput {
+                Ok(..) => Cgooutput {
                     output: chain.output,
                     outputlen: chain.outputlen,
                     err: 0,
                     errmsg: null_mut(),
+                },
+                Err(errs) => {
+                    println!("execute paniced: {}", errs);
+                    let cerrs = CString::new(errs).unwrap(); // error string will copy to go env to printout.
+                    Cgooutput {
+                        output: null_mut(),
+                        outputlen: 0,
+                        err: 1,
+                        errmsg: cerrs.into_raw() as Memptr,
+                    }
                 }
             }
         }
@@ -411,7 +426,6 @@ pub extern "C" fn ontio_call_invoke(
     codelen: u32,
     inter_chain: InterOpCtx,
 ) -> Cgooutput {
-    println!("ontio_call_invoke 00000");
     let wasm = unsafe { std::slice::from_raw_parts(code, codelen as usize) };
     let chain = ChainCtx::new(
         inter_chain.timestamp,
@@ -431,11 +445,6 @@ pub extern "C" fn ontio_call_invoke(
         inter_chain.wasmvm_service_ptr,
     );
 
-    println!("height: {}", chain.height);
-    println!("block_hash: {:?}", chain.block_hash);
-    println!("timestamp: {:?}", chain.timestamp);
-    println!("gas_left: {:?}", chain.gas_left);
-
     let address = utils::contract_address(wasm);
     let module = MODULE_CACHE.lock().get(&address).cloned();
 
@@ -450,11 +459,6 @@ pub extern "C" fn ontio_call_invoke(
         module
     });
 
-    //if verbose {
-    //    module.dump();
-    //}
-
     let mut instance = module.instantiate(chain);
     instance.invoke()
-    //unsafe { *output = chain.output };
 }

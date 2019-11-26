@@ -51,7 +51,7 @@ extern "C" {
     fn ontio_debug_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
     fn ontio_notify_cgo(vmctx: Memptr, data_ptr: u32, l: u32) -> Cgoerror;
     fn ontio_storage_read_cgo(
-        vmctx: *mut VMContext,
+        vmctx: Memptr,
         key_ptr: u32,
         klen: u32,
         val: u32,
@@ -59,15 +59,15 @@ extern "C" {
         offset: u32,
     ) -> Cgou32;
     fn ontio_storage_write_cgo(
-        vmctx: *mut VMContext,
+        vmctx: Memptr,
         key_ptr: u32,
         klen: u32,
         val: u32,
         vlen: u32,
     ) -> Cgoerror;
-    fn ontio_storage_delete_cgo(vmctx: *mut VMContext, keyPtr: u32, klen: u32) -> Cgoerror;
+    fn ontio_storage_delete_cgo(vmctx: Memptr, keyPtr: u32, klen: u32) -> Cgoerror;
     fn ontio_contract_create_cgo(
-        vmctx: *mut VMContext,
+        vmctx: Memptr,
         code_ptr: u32,
         code_len: u32,
         vm_type: u32,
@@ -84,7 +84,7 @@ extern "C" {
         newaddress_ptr: u32,
     ) -> Cgou32;
     fn ontio_contract_migrate_cgo(
-        vmctx: *mut VMContext,
+        vmctx: Memptr,
         code_ptr: u32,
         code_len: u32,
         vm_type: u32,
@@ -100,7 +100,7 @@ extern "C" {
         desc_len: u32,
         newaddress_ptr: u32,
     ) -> Cgou32;
-    fn ontio_contract_destroy_cgo() -> Cgoerror;
+    fn ontio_contract_destroy_cgo(vmctx: Memptr) -> Cgoerror;
     fn ontio_call_contract_cgo(
         vmctx: Memptr,
         contract_addr: u32,
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn ontio_debug(vmctx: *mut VMContext, data_ptr: u32, l: u3
     })
 }
 
-/// Implementation of ontio_debug api
+/// Implementation of ontio_return api
 #[no_mangle]
 pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u32) {
     check_host_panic(|| {
@@ -447,10 +447,11 @@ pub unsafe extern "C" fn ontio_return(vmctx: *mut VMContext, data_ptr: u32, l: u
 
         chain.output = outputbuffer;
         chain.outputlen = l;
+        panic!("ontio_return_special_sig");
     })
 }
 
-/// Implementation of ontio_debug api
+/// Implementation of ontio_call_contract
 #[no_mangle]
 pub unsafe extern "C" fn ontio_call_contract(
     vmctx: *mut VMContext,
@@ -469,7 +470,7 @@ pub unsafe extern "C" fn ontio_call_contract(
     })
 }
 
-/// Implementation of ontio_debug api
+/// Implementation of ontio_notify api
 #[no_mangle]
 pub unsafe extern "C" fn ontio_notify(vmctx: *mut VMContext, ptr: u32, l: u32) {
     check_host_panic(|| {
@@ -491,7 +492,7 @@ pub unsafe extern "C" fn ontio_storage_read(
     offset: u32,
 ) -> u32 {
     check_host_panic(|| {
-        let cgou32 = ontio_storage_read_cgo(vmctx, key_ptr, klen, val, vlen, offset);
+        let cgou32 = ontio_storage_read_cgo(vmctx as Memptr, key_ptr, klen, val, vlen, offset);
         if cgou32.err != 0 {
             panic!(*Box::from_raw(cgou32.errmsg as *mut String));
         }
@@ -509,7 +510,7 @@ pub unsafe extern "C" fn ontio_storage_write(
     vlen: u32,
 ) {
     check_host_panic(|| {
-        let err = ontio_storage_write_cgo(vmctx, key_ptr, klen, val, vlen);
+        let err = ontio_storage_write_cgo(vmctx as Memptr, key_ptr, klen, val, vlen);
         if err.err != 0 {
             panic!(*Box::from_raw(err.errmsg as *mut String));
         }
@@ -520,7 +521,7 @@ pub unsafe extern "C" fn ontio_storage_write(
 #[no_mangle]
 pub unsafe extern "C" fn ontio_storage_delete(vmctx: *mut VMContext, key_ptr: u32, klen: u32) {
     check_host_panic(|| {
-        let err = ontio_storage_delete_cgo(vmctx, key_ptr, klen);
+        let err = ontio_storage_delete_cgo(vmctx as Memptr, key_ptr, klen);
         if err.err != 0 {
             panic!(*Box::from_raw(err.errmsg as *mut String));
         }
@@ -548,7 +549,7 @@ pub unsafe extern "C" fn ontio_contract_create(
 ) -> u32 {
     check_host_panic(|| {
         let cgou32 = ontio_contract_create_cgo(
-            vmctx,
+            vmctx as Memptr,
             code_ptr,
             code_len,
             vm_type,
@@ -571,7 +572,7 @@ pub unsafe extern "C" fn ontio_contract_create(
     })
 }
 
-/// Implementation of ontio_contract_create
+/// Implementation of ontio_contract_migrate
 #[no_mangle]
 pub unsafe extern "C" fn ontio_contract_migrate(
     vmctx: *mut VMContext,
@@ -592,7 +593,7 @@ pub unsafe extern "C" fn ontio_contract_migrate(
 ) -> u32 {
     check_host_panic(|| {
         let cgou32 = ontio_contract_migrate_cgo(
-            vmctx,
+            vmctx as Memptr,
             code_ptr,
             code_len,
             vm_type,
@@ -615,14 +616,15 @@ pub unsafe extern "C" fn ontio_contract_migrate(
     })
 }
 
-/// Implementation of ontio_contract_delete
+/// Implementation of ontio_contract_destroy
 #[no_mangle]
-pub unsafe extern "C" fn ontio_contract_destroy() {
+pub unsafe extern "C" fn ontio_contract_destroy(vmctx: *mut VMContext) {
     check_host_panic(|| {
-        let err = ontio_contract_destroy_cgo();
+        let err = ontio_contract_destroy_cgo(vmctx as Memptr);
         if err.err != 0 {
             panic!(*Box::from_raw(err.errmsg as *mut String));
         }
+        panic!("ontio_return_special_sig");
     })
 }
 
@@ -661,7 +663,7 @@ pub unsafe extern "C" fn ontio_write_wasmvm_memory(
     }
 }
 
-/// Interface for cgo read wasm vm memory.
+/// Interface for ontio_read_wasmvm_memory
 #[no_mangle]
 pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     vmctx: *mut VMContext,
@@ -700,7 +702,7 @@ pub unsafe extern "C" fn ontio_read_wasmvm_memory(
     }
 }
 
-/// Implementation of memoryread api
+/// Implementation of ontio_wasm_service_ptr
 #[no_mangle]
 pub unsafe extern "C" fn ontio_wasm_service_ptr(vmctx: *mut VMContext) -> Cgou64 {
     let res = catch_wasm_panic(|| {
