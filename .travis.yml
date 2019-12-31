@@ -9,6 +9,6 @@ before_script:
 
 jobs:
     include:
-        - language go
+        - language: go
           script:
           - bash ./.travis.build.sh
