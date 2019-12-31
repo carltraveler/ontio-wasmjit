@@ -6,6 +6,9 @@ cache: cargo
 
 before_script:
 - rustup component add rustfmt
-script:
-  - bash ./.travis.build.sh
 
+jobs:
+    include:
+        - language go
+          script:
+          - bash ./.travis.build.sh
