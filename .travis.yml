@@ -6,12 +6,15 @@ cache: cargo
 
 before_script:
 - rustup component add rustfmt
-script:
-- bash ./.travis.build.sh
 
 jobs:
     include:
+        - language: rust
+          rust: nightly
+          script:
+          - bash ./.travis.build.sh 0
+
         - language: go
           go: 1.12.x
           script:
-          - bash ./.travis.build.sh
+          - bash ./.travis.build.sh 1
