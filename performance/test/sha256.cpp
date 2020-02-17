@@ -303,9 +303,6 @@ class hello : public contract {
 public:
 	using contract::contract;
 	void hi(uint32_t count) {
-		int a = 2;
-		int b = 2;
-		ontio::check(a == b, "test message");
 		int k = 0;
 
 		while (k < count) {
@@ -316,19 +313,13 @@ public:
 
 			// sha256
 			sha256(srcText, encryptText, encryptHexText);
-			//print_byte((uint8_t*)encryptText.data(), encryptText.size());
-			//printf("chuan %s\n", encryptHexText.c_str());
 
-			// md5
-			md5(srcText, encryptText, encryptHexText);
-			//print_byte((uint8_t*)encryptText.data(), encryptText.size());
-			//printf("chuan %s\n", encryptHexText.c_str());
+			//md5(srcText, encryptText, encryptHexText);
 
-			// des 
-			std::string desKey = "12345";  
-			encryptText = des_encrypt(srcText, desKey);  
-			decryptText = des_decrypt(encryptText, desKey);  
-			//printf("decryptText %s\n", decryptText.c_str());
+			//std::string desKey = "12345";  
+			//encryptText = des_encrypt(srcText, desKey);  
+			//decryptText = des_decrypt(encryptText, desKey);  
+			//check(decryptText == srcText, "des error");
 
 			k++;
 		}
@@ -339,6 +330,6 @@ extern "C"{
 void invoke()
 {
 	hello t;
-	t.hi(100);
+	t.hi(1000000);
 }
 }
