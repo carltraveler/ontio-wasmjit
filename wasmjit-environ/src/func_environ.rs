@@ -566,49 +566,49 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
         //todo: remove debug log
         log::warn!("curr opcode: {:?}", op);
 
-        if state.reachable() {
-            self.scope_gas_counter += 1;
+        //if state.reachable() {
+        //    self.scope_gas_counter += 1;
 
-            match op {
-                Operator::Unreachable
-                | Operator::Block { .. }
-                | Operator::Br { .. }
-                | Operator::BrIf { .. }
-                | Operator::BrTable { .. }
-                | Operator::Loop { .. }
-                | Operator::If { .. }
-                | Operator::Else
-                | Operator::CallIndirect { .. }
-                | Operator::Call { .. }
-                | Operator::Return
-                | Operator::End => {
-                    if self.scope_gas_counter != 0 {
-                        let update_const = builder
-                            .ins()
-                            .iconst(ir::types::I32, self.scope_gas_counter as i64);
-                        let (func_sig, func_idx) = self.get_check_gas_func(&mut builder.func);
-                        let (vmctx, func_addr) = self.translate_load_builtin_function_address(
-                            &mut builder.cursor(),
-                            func_idx,
-                        );
-                        builder
-                            .ins()
-                            .call_indirect(func_sig, func_addr, &[vmctx, update_const]);
+        //    match op {
+        //        Operator::Unreachable
+        //        | Operator::Block { .. }
+        //        | Operator::Br { .. }
+        //        | Operator::BrIf { .. }
+        //        | Operator::BrTable { .. }
+        //        | Operator::Loop { .. }
+        //        | Operator::If { .. }
+        //        | Operator::Else
+        //        | Operator::CallIndirect { .. }
+        //        | Operator::Call { .. }
+        //        | Operator::Return
+        //        | Operator::End => {
+        //            if self.scope_gas_counter != 0 {
+        //                let update_const = builder
+        //                    .ins()
+        //                    .iconst(ir::types::I32, self.scope_gas_counter as i64);
+        //                let (func_sig, func_idx) = self.get_check_gas_func(&mut builder.func);
+        //                let (vmctx, func_addr) = self.translate_load_builtin_function_address(
+        //                    &mut builder.cursor(),
+        //                    func_idx,
+        //                );
+        //                builder
+        //                    .ins()
+        //                    .call_indirect(func_sig, func_addr, &[vmctx, update_const]);
 
-                        self.scope_gas_counter = 0;
-                        match op {
-                            Operator::CallIndirect { .. } | Operator::Call { .. } => {
-                                self.update_call_depth(1, builder);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
-            }
-        } else {
-            assert_eq!(self.scope_gas_counter, 0);
-        }
+        //                self.scope_gas_counter = 0;
+        //                match op {
+        //                    Operator::CallIndirect { .. } | Operator::Call { .. } => {
+        //                        self.update_call_depth(1, builder);
+        //                    }
+        //                    _ => {}
+        //                }
+        //            }
+        //        }
+        //        _ => {}
+        //    }
+        //} else {
+        //    assert_eq!(self.scope_gas_counter, 0);
+        //}
 
         Ok(())
     }
@@ -621,14 +621,14 @@ impl<'module_environment> cranelift_wasm::FuncEnvironment for FuncEnvironment<'m
     ) -> WasmResult<()> {
         //todo: remove debug log
         log::warn!("after opcode: {:?}", op);
-        if state.reachable() {
-            match op {
-                Operator::CallIndirect { .. } | Operator::Call { .. } => {
-                    self.update_call_depth(-1, builder);
-                }
-                _ => {}
-            }
-        }
+        //if state.reachable() {
+        //    match op {
+        //        Operator::CallIndirect { .. } | Operator::Call { .. } => {
+        //            self.update_call_depth(-1, builder);
+        //        }
+        //        _ => {}
+        //    }
+        //}
         Ok(())
     }
 }
