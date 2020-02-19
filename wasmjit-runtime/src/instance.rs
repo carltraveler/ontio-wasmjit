@@ -29,6 +29,31 @@ use ontio_wasmjit_environ::{DataInitializer, Module, TableElements, VMOffsets};
 
 /// Execution Metrics.
 #[derive(Default, Debug)]
+pub struct ExecMetricsInner {
+    /// Step left for execution
+    pub exec_step_left: u64,
+    /// Gas factor
+    pub gas_factor: u64,
+    /// Gas left for executing
+    pub gas_left: u64,
+    /// function call depth left for execution
+    pub depth_left: u64,
+}
+
+impl ExecMetricsInner {
+    /// Create a new `ExecMetricsInner`.
+    pub fn new(exec_step_left: u64, gas_factor: u64, gas_left: u64, depth_left: u64) -> Self {
+        Self {
+            exec_step_left: exec_step_left,
+            gas_factor: gas_factor,
+            gas_left: gas_left,
+            depth_left: depth_left,
+        }
+    }
+}
+
+/// Execution Metrics.
+#[derive(Default, Debug)]
 pub struct ExecMetrics {
     /// Step left for execution
     pub exec_step_left: AtomicU64,
@@ -183,7 +208,7 @@ pub struct Instance {
     pub(crate) local_gas_counter: u64,
 
     /// Exec metrics.
-    pub exec_metrics: Arc<ExecMetrics>,
+    pub exec_metrics: ExecMetricsInner,
     trap_kind: wasmjit_result_kind,
 
     /// Hosts can store arbitrary per-instance information here.
@@ -490,16 +515,13 @@ impl Instance {
     }
 
     /// Check and substract the gas costs.
+    #[inline(always)]
     pub fn check_gas(&mut self, costs: u64) -> bool {
-        let origin = self
-            .exec_metrics
-            .gas_left
-            .fetch_sub(costs, Ordering::Relaxed);
-
-        if origin < costs {
-            self.exec_metrics.gas_left.store(0, Ordering::Relaxed);
+        if self.exec_metrics.gas_left < costs {
+            self.exec_metrics.gas_left = 0;
             false
         } else {
+            self.exec_metrics.gas_left -= costs;
             true
         }
     }
@@ -564,6 +586,12 @@ impl InstanceHandle {
 
         let local_gas_counter = 0;
         let trap_kind = wasmjit_result_err_trap;
+
+        let exec_step_left = exec_metrics.exec_step_left.load(Ordering::Relaxed);
+        let gas_factor = exec_metrics.gas_factor.load(Ordering::Relaxed);
+        let gas_left = exec_metrics.gas_left.load(Ordering::Relaxed);
+        let depth_left = exec_metrics.depth_left.load(Ordering::Relaxed);
+        let exec_metrics = ExecMetricsInner::new(exec_step_left, gas_factor, gas_left, depth_left);
 
         let instance = {
             #[allow(clippy::cast_ptr_alignment)]

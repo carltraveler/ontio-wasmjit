@@ -15,9 +15,10 @@ use ontio_wasmjit_environ::{
 };
 use ontio_wasmjit_runtime::builtins::{wasmjit_result_err_trap, wasmjit_result_kind};
 use ontio_wasmjit_runtime::{
-    get_mut_trap_registry, wasmjit_call, wasmjit_call_trampoline, InstanceHandle,
+    get_mut_trap_registry, wasmjit_call, wasmjit_call_trampoline, ExecMetricsInner, InstanceHandle,
     TrapRegistrationGuard, VMFunctionBody,
 };
+use std::sync::atomic::Ordering;
 
 use dynasmrt::mmap::MutableBuffer;
 use dynasmrt::ExecutableBuffer;
@@ -132,7 +133,17 @@ impl Instance {
 
     pub fn set_host_state(&mut self, host_state: Box<ChainCtx>) {
         let instance = self.handle.instance_mut();
-        instance.exec_metrics = host_state.exec_metrics.clone();
+
+        let exec_step_left = host_state
+            .exec_metrics
+            .exec_step_left
+            .load(Ordering::Relaxed);
+        let gas_factor = host_state.exec_metrics.gas_factor.load(Ordering::Relaxed);
+        let gas_left = host_state.exec_metrics.gas_left.load(Ordering::Relaxed);
+        let depth_left = host_state.exec_metrics.depth_left.load(Ordering::Relaxed);
+        let exec_metrics = ExecMetricsInner::new(exec_step_left, gas_factor, gas_left, depth_left);
+
+        instance.exec_metrics = exec_metrics;
         self.handle.set_host_state(host_state);
     }
 

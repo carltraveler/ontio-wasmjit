@@ -8,7 +8,6 @@ use crate::vmcontext::VMContext;
 use crate::wasmjit_unwind;
 use cranelift_wasm::DefinedMemoryIndex;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::Ordering;
 
 /// trap_kind
 pub type wasmjit_result_kind = u32;
@@ -96,55 +95,50 @@ pub unsafe extern "C" fn wasmjit_memory32_size(vmctx: *mut VMContext, memory_ind
 /// Implementation of check gas
 #[no_mangle]
 pub unsafe extern "C" fn wasmjit_check_gas(vmctx: *mut VMContext, costs: u32) {
-    check_host_panic((&mut *vmctx).instance(), |instance| {
-        let costs = costs as u64;
+    let instance = (&mut *vmctx).instance();
 
-        if instance.exec_metrics.exec_step_left.load(Ordering::Relaxed) < costs {
-            instance
-                .exec_metrics
-                .exec_step_left
-                .store(0, Ordering::Relaxed);
-            panic!("wasmjit: exec step exhausted");
-        } else {
-            instance
-                .exec_metrics
-                .exec_step_left
-                .fetch_sub(costs, Ordering::Relaxed);
-        }
+    let costs = costs as u64;
+    if instance.exec_metrics.exec_step_left < costs {
+        instance.exec_metrics.exec_step_left = 0;
+        instance.set_trap_kind(wasmjit_result_err_trap);
+        let msg = String::from("wasmjit: exec step exhausted");
+        wasmjit_unwind(msg)
+    } else {
+        instance.exec_metrics.exec_step_left -= costs;
+    }
 
-        instance.local_gas_counter += costs;
+    instance.local_gas_counter += costs;
+    let gas_factor = instance.exec_metrics.gas_factor;
 
-        let gas_factor = instance.exec_metrics.gas_factor.load(Ordering::Relaxed);
-        let normalize_costs = instance.local_gas_counter / gas_factor;
-        if normalize_costs == 0 {
-            return;
-        }
+    let normalize_costs = instance.local_gas_counter / gas_factor;
+    if normalize_costs == 0 {
+        return;
+    }
 
-        instance.local_gas_counter %= gas_factor;
-        if !instance.check_gas(normalize_costs) {
-            panic!("wasmjit: gas exhausted");
-        }
-    })
+    instance.local_gas_counter %= gas_factor;
+    if !instance.check_gas(normalize_costs) {
+        instance.set_trap_kind(wasmjit_result_err_trap);
+        let msg = String::from("wasmjit: gas exhausted");
+        wasmjit_unwind(msg)
+    }
 }
 
 /// Implementation of check gas
 #[no_mangle]
 pub unsafe extern "C" fn wasmjit_check_depth(vmctx: *mut VMContext, count: i32) {
-    check_host_panic((&mut *vmctx).instance(), |instance| {
-        let origin = if count > 0 {
-            instance
-                .exec_metrics
-                .depth_left
-                .fetch_sub(count as u64, Ordering::Relaxed)
-        } else {
-            instance
-                .exec_metrics
-                .depth_left
-                .fetch_add(-count as u64, Ordering::Relaxed)
-        };
-        if origin == 0 {
-            instance.exec_metrics.depth_left.store(0, Ordering::Relaxed);
-            panic!("wasmjit: out of function calling depth limitation");
-        }
-    })
+    let instance = (&mut *vmctx).instance();
+    let origin = instance.exec_metrics.depth_left;
+
+    if count > 0 {
+        instance.exec_metrics.depth_left -= count as u64;
+    } else {
+        instance.exec_metrics.depth_left += -count as u64;
+    }
+
+    if origin == 0 {
+        instance.exec_metrics.depth_left = 0;
+        instance.set_trap_kind(wasmjit_result_err_trap);
+        let msg = String::from("wasmjit: out of function calling depth limitation");
+        wasmjit_unwind(msg)
+    }
 }
